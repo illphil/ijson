@@ -146,3 +146,122 @@ def items(prefixed_events, prefix):
                     yield value
     except StopIteration:
         pass
+
+class ijsondict(dict):
+    '''
+    A dictionary object which has an generator in place of the dictionary
+    item to be iterated over.
+
+    Parameters:
+
+    - parser: a basic_parser object
+    - prefix: string indicating location of array to target.
+
+    An example expected usage for this kind class would be for streaming data 
+    provided by a REST api similar to Neo4j's which first emits column information
+    and then streams the rest of the data. In this case you might do something like:
+
+    results = ijsondict(parser, "data.item")
+    results = izip(results["columns"], results["data"])
+    '''
+    classmap = {'start_map':dict, 'start_array':list}
+    def __init__(self, parser, prefix, **kwargs):
+        self.keys_stack = []
+        self.data_stack = []
+
+        if isinstance(prefix, basestring):
+            self.prefix = prefix.split('.')
+        elif isinstance(prefix, list):
+            self.prefix = prefix
+        else:
+            raise ValueError
+        self._start_parse(parser)
+
+    def _start_parse(self, parser):
+        '''Build's up the dictionary until we locate the first 
+        instance of the prefix, then defers the remainder of the job to 
+        the generator function.
+        '''
+        keys_stack = self.keys_stack
+        data_stack = self.data_stack
+
+        first = True
+        this = self
+
+        prefix = self.prefix[:-1]
+        for token, value in parser:
+            if token.startswith('start_'):
+                break_flag = False
+                if keys_stack == prefix:
+                    break_flag = True
+                    this = self._json_generator(parser)
+                else:
+                    if first:
+                        first = False
+                    else:
+                        this = self.classmap[token]() 
+
+                if len(keys_stack):
+                    thiskey = keys_stack[-1]
+                    thisdata = data_stack[-1]
+                    if isinstance(thisdata, dict):
+                        thisdata[thiskey] = this
+                    else:
+                        thisdata.append(this)
+                data_stack.append(this)
+                keys_stack.append("item")
+                if break_flag:
+                    break
+            elif token.startswith('end_'):
+                keys_stack.pop()
+                data_stack.pop()
+            elif token == 'map_key':
+                keys_stack[-1] = value
+            else:
+                key = keys_stack[-1]
+                data = data_stack[-1]
+                if isinstance(data, dict):
+                    data[key] = value
+                else:
+                    data.append(value)
+
+    def _json_generator(self, parser):
+        '''Resumes from where _start_parse left of, yielding items and
+        then continues building the dictionary.'''
+        keys_stack = self.keys_stack
+        data_stack = self.data_stack
+
+        data_stack[-1] = []
+
+        popped = None
+        yield_flag = False
+        for token, value in parser:
+            if token.startswith('start_'):
+                this = self.classmap[token]()
+                if len(keys_stack):
+                    thiskey = keys_stack[-1]
+                    thisdata = data_stack[-1]
+                    if isinstance(thisdata, dict):
+                        thisdata[thiskey] = this
+                    else:
+                        thisdata.append(this)
+                data_stack.append(this)
+                keys_stack.append('item')
+            elif token.startswith('end_'):
+                keys_stack.pop()
+                value = data_stack.pop()
+                yield_flag = True
+            elif token == 'map_key':
+                keys_stack[-1] = value
+            else:
+                key = keys_stack[-1]
+                data = data_stack[-1]
+                if isinstance(data, dict):
+                    data[key] = value
+                else:
+                    data.append(value)
+                yield_flag = True
+
+            if yield_flag and keys_stack == self.prefix:
+                yield value
+                yield_flag = False

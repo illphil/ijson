@@ -15,6 +15,7 @@ parsing backend. You can also explicitly import a required backend from
 '''
 
 from ijson.common import JSONError, IncompleteJSONError, ObjectBuilder
+from ijson.common import ijsondict
 from ijson.backends import YAJLImportError
 
 try:
